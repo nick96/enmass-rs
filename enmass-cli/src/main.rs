@@ -63,59 +63,26 @@ fn main() {
         engine::PeopleEngine::new(client, authenticator)
     };
 
-    let group_members: Vec<engine::Person> = match engine.get_members(group_name) {
-        Ok(group_members) => group_members,
-        Err(e) => panic!(format!(
-            "Could not get members of group {}: {:?}",
-            group_name, e
-        )),
-    };
     match opts.command {
         Command::Get => {
-            let details: Vec<String> = match opts.contact_type {
-                ContactType::Email => group_members
-                    .iter()
-                    .map(|member| {
-                        member
-                            .clone()
-                            .email_addresses
-                            .unwrap_or(Vec::default())
-                            .iter()
-                            .map(|email_addr| {
-                                String::from(
-                                    email_addr
-                                        .value
-                                        .clone()
-                                        .unwrap_or(String::from("<missing>"))
-                                        .trim(),
-                                )
-                            })
-                            .collect()
-                    })
-                    .collect(),
-                ContactType::Phone => group_members
-                    .iter()
-                    .map(|member| {
-                        member
-                            .clone()
-                            .phone_numbers
-                            .unwrap_or(Vec::default())
-                            .iter()
-                            .map(|phone| {
-                                String::from(
-                                    phone
-                                        .value
-                                        .clone()
-                                        .unwrap_or(String::from("<missing>"))
-                                        .trim(),
-                                )
-                            })
-                            .collect()
-                    })
-                    .collect(),
+            let details = match opts.contact_type {
+                ContactType::Email => engine.get_group_emails(group_name),
+                ContactType::Phone => engine.get_group_phones(group_name),
             };
-            println!("{}", details.join(";"));
+            match details {
+                Ok(details) => println!("{}", details.join(";")),
+                Err(e) => panic!("Could not get details: {}", e),
+            }
         }
-        Command::Send => unimplemented!(),
+        Command::Send => match opts.contact_type {
+            ContactType::Email => {
+                let _emails = engine.get_group_emails(group_name);
+                todo!()
+            }
+            ContactType::Phone => {
+                let _phones = engine.get_group_phones(group_name);
+                todo!()
+            }
+        },
     }
 }
