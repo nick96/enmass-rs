@@ -1,0 +1,14 @@
+[package]
+name = "enmass-cli"
+version = "0.1.0"
+authors = ["Nick Spain <nicholas.spain96@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+dotenv = "0.15.0"
+strsim = "0.9.3"
+structopt = "0.3"
+yup-oauth2 = "^1.0"
+hyper = "^0.10"
+
+engine = { path = "../engine" }
