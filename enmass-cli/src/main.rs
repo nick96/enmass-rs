@@ -1,8 +1,11 @@
 use dotenv;
 use engine;
+use snafu::ErrorCompat;
 use std::default::Default;
+use std::io::Write;
 use structopt::clap::arg_enum;
 use structopt::StructOpt;
+use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 
 arg_enum! {
     #[derive(PartialEq, Debug, Clone)]
@@ -41,6 +44,19 @@ struct Opts {
     group_name: String,
 }
 
+fn write_error(error: engine::Error) {
+    let mut stderr = StandardStream::stderr(ColorChoice::Auto);
+    stderr
+        .set_color(ColorSpec::new().set_fg(Some(Color::Red)))
+        .unwrap();
+    write!(&mut stderr, "Failed: ").unwrap();
+    stderr.reset().unwrap();
+    writeln!(&mut stderr, "{}", error).unwrap();
+    if let Some(backtrace) = error.backtrace() {
+        eprintln!("{}", backtrace)
+    }
+}
+
 fn main() {
     dotenv::dotenv().ok();
 
@@ -71,7 +87,7 @@ fn main() {
             };
             match details {
                 Ok(details) => println!("{}", details.join(";")),
-                Err(e) => panic!("Could not get details: {}", e),
+                Err(e) => write_error(e),
             }
         }
         Command::Send => match opts.contact_type {

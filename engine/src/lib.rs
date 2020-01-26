@@ -23,23 +23,29 @@ pub struct PeopleEngine {
     hub: Service,
 }
 
+type Result<T, E = errors::Error> = std::result::Result<T, E>;
+
 impl PeopleEngine {
     pub fn new(client: hyper::Client, authenticator: Authenticator) -> Self {
         let hub = people::PeopleService::new(client, authenticator);
         PeopleEngine { hub: hub }
     }
 
-    pub fn get_contact_groups(&self) -> Result<Vec<people::ContactGroup>, Error> {
-        match self.hub.contact_groups().list().doit() {
-            Ok((_, contact_groups_resp)) => match contact_groups_resp.contact_groups {
-                Some(contact_groups) => Ok(contact_groups),
-                None => Err(Error::NoContactGroups),
-            },
-            Err(e) => Err(Error::GetContactGroups { source: e }),
-        }
+    pub fn get_contact_groups(&self) -> Result<Vec<people::ContactGroup>> {
+        let (_, contact_groups_resp) = self
+            .hub
+            .contact_groups()
+            .list()
+            .doit()
+            .context(errors::GetContactGroups)?;
+        ensure!(
+            contact_groups_resp.contact_groups.is_some(),
+            errors::NoContactGroups
+        );
+        Ok(contact_groups_resp.contact_groups.unwrap())
     }
 
-    pub fn get_contact_group(&self, group_name: &String) -> Result<people::ContactGroup, Error> {
+    pub fn get_contact_group(&self, group_name: &String) -> Result<people::ContactGroup> {
         let contact_group_without_members = match self.get_contact_groups() {
             Ok(contact_groups) => {
                 let selected_groups: Vec<&people::ContactGroup> = contact_groups
@@ -56,23 +62,18 @@ impl PeopleEngine {
                             .partial_cmp(&strsim::levenshtein(cg_name2, group_name))
                             .unwrap()
                     });
-
-                    if let Some(closest) = group_names.get(0) {
-                        Err(Error::NoContactGroupsFoundByName {
-                            group_name: group_name.to_string(),
-                            message: format!("Did you mean {}", closest),
-                        })
-                    } else {
-                        Err(Error::NoContactGroupsFoundByName {
-                            group_name: group_name.to_string(),
-                            message: String::from(""),
-                        })
+                    let closest = group_names.get(0).context(errors::NoContactGroups)?;
+                    errors::NoContactGroupsFoundByName {
+                        group_name: group_name.to_string(),
+                        closest: closest,
                     }
+                    .fail()
                 } else if selected_groups.len() != 1 {
-                    Err(Error::NonUniqueContactGroupName {
+                    errors::NonUniqueContactGroupName {
                         group_name: group_name.to_string(),
                         found: selected_groups.len(),
-                    })
+                    }
+                    .fail()
                 } else {
                     Ok(selected_groups.first().unwrap().clone().clone())
                 }
@@ -84,160 +85,119 @@ impl PeopleEngine {
             Ok(contact_group_without_members) => {
                 match contact_group_without_members.resource_name {
                     Some(resource_name) => {
-                        let result = self
+                        let (_, contact_group) = self
                             .hub
                             .contact_groups()
                             .get(&resource_name)
                             .max_members(100)
-                            .doit();
-                        match result {
-                            Ok((_, contact_group)) => Ok(contact_group),
-                            Err(e) => Err(Error::GetContactGroup {
+                            .doit()
+                            .context(errors::GetContactGroup {
                                 group_name: group_name.to_string(),
-                                source: e,
-                            }),
-                        }
+                            })?;
+                        Ok(contact_group)
                     }
-                    None => Err(Error::GetContactGroupResourceName {
+                    None => errors::GetContactGroupResourceName {
                         group_name: group_name.to_string(),
-                    }),
+                    }
+                    .fail(),
                 }
             }
             Err(e) => Err(e),
         }
     }
 
-    pub fn get_member_by_resource_name(
-        &self,
-        resource_name: &String,
-    ) -> Result<people::Person, Error> {
-        match self
+    pub fn get_member_by_resource_name(&self, resource_name: &String) -> Result<people::Person> {
+        let (_, member) = self
             .hub
             .people()
             .get(resource_name)
             .person_fields("emailAddresses,phoneNumbers")
             .doit()
-        {
-            Ok((_, person)) => Ok(person),
-            Err(e) => Err(Error::GetPersonByResourceName {
+            .context(errors::GetPersonByResourceName {
                 resource_name: resource_name.to_string(),
-                source: e,
-            }),
-        }
+            })?;
+        Ok(member)
     }
 
-    pub fn get_members(&self, group_name: &String) -> Result<Vec<people::Person>, Error> {
-        match self.get_contact_group(group_name) {
-            Ok(group) => match group.member_resource_names {
-                Some(resource_names) => {
-                    let result = self
-                        .hub
-                        .people()
-                        .get_batch_get()
-                        .add_resource_names(&resource_names.join(","))
-                        .person_fields("emailAddresses,phoneNumbers")
-                        .doit();
-
-                    if let Err(e) = result {
-                        return Err(Error::GetContactGroupMembers {
-                            group_name: group_name.to_string(),
-                            prev_err_msg: format!("{}", e),
-                        });
-                    }
-
-                    let (_, response) = result.unwrap();
-                    if response.responses.is_none() {
-                        return Err(Error::GetContactGroupMembers {
-                            group_name: group_name.to_string(),
-                            prev_err_msg: "".to_string(),
-                        });
-                    }
-                    let people = response.responses.unwrap();
-                    if people.iter().any(|p| p.person.is_none()) {
-                        return Err(Error::GetContactGroupMembers {
-                            group_name: group_name.to_string(),
-                            prev_err_msg: format!(
-                                "None person in members of group '{}'",
-                                group_name
-                            ),
-                        });
-                    }
-                    let members = people
-                        .iter()
-                        .map(|p| p.person.as_ref().unwrap().clone())
-                        .collect();
-                    Ok(members)
-                }
-                None => Err(Error::NoGroupMemberResourceNames {
+    pub fn get_members(&self, group_name: &String) -> Result<Vec<people::Person>> {
+        let group = self
+            .get_contact_group(group_name)
+            .context(errors::GetMembers {
+                group_name: group_name.to_string(),
+            })?;
+        let resource_names =
+            group
+                .member_resource_names
+                .context(errors::NoGroupMemberResourceNames {
                     group_name: group_name.to_string(),
-                }),
-            },
-            Err(e) => Err(e),
+                })?;
+        let mut request = self.hub.people().get_batch_get();
+        for rn in resource_names {
+            request = request.add_resource_names(&rn);
         }
+
+        let (_, response) = request
+            .person_fields("emailAddresses,phoneNumbers")
+            .doit()
+            .context(errors::GetContactGroupMembers {
+                group_name: group_name.to_string(),
+            })?;
+
+        let people = response
+            .responses
+            .context(errors::MissingContactGroupMembers {
+                group_name: group_name.to_string(),
+            })?;
+        if people.iter().any(|p| p.person.is_none()) {
+            return errors::NonePersonInGroup {
+                group_name: group_name.to_string(),
+            }
+            .fail();
+        }
+        let members = people
+            .iter()
+            .map(|p| p.person.as_ref().unwrap().clone())
+            .collect();
+        Ok(members)
     }
 
-    pub fn get_group_emails(&self, group_name: &String) -> Result<Vec<String>, Error> {
-        match self.get_members(group_name) {
-            Ok(group_members) => {
-                let emails = group_members
-                    .iter()
-                    .map(|member| {
-                        member
-                            .clone()
-                            .email_addresses
-                            .unwrap_or(Vec::default())
-                            .iter()
-                            .map(|email_addr| {
-                                String::from(
-                                    email_addr
-                                        .value
-                                        .clone()
-                                        .unwrap_or(String::from("<missing>"))
-                                        .trim(),
-                                )
-                            })
-                            .collect()
-                    })
-                    .collect();
-                Ok(emails)
-            }
-            Err(e) => Err(Error::GetGroupEmails {
+    pub fn get_group_emails(&self, group_name: &String) -> Result<Vec<String>> {
+        let group_members = self
+            .get_members(group_name)
+            .context(errors::GetGroupEmails {
                 group_name: group_name.to_string(),
-                msg: format!("{}", e),
-            }),
-        }
+            })?;
+        let emails: Vec<String> = group_members
+            .iter()
+            .flat_map(|member| {
+                let email_addresses = member.email_addresses.as_ref().unwrap();
+                email_addresses
+                    .iter()
+                    .map(|email_addr| email_addr.value.as_ref().unwrap().trim().to_string())
+            })
+            .collect::<Vec<String>>();
+        Ok(emails)
     }
 
-    pub fn get_group_phones(&self, group_name: &String) -> Result<Vec<String>, Error> {
-        match self.get_members(group_name) {
-            Ok(group_members) => {
-                let phones = group_members
-                    .iter()
-                    .map(|member| {
-                        member
-                            .clone()
-                            .phone_numbers
-                            .unwrap_or(Vec::default())
-                            .iter()
-                            .map(|phone| {
-                                String::from(
-                                    phone
-                                        .value
-                                        .clone()
-                                        .unwrap_or(String::from("<missing>"))
-                                        .trim(),
-                                )
-                            })
-                            .collect()
-                    })
-                    .collect();
-                Ok(phones)
-            }
-            Err(e) => Err(Error::GetGroupEmails {
+    pub fn get_group_phones(&self, group_name: &String) -> Result<Vec<String>> {
+        let group_members = self
+            .get_members(group_name)
+            .context(errors::GetGroupPhones {
                 group_name: group_name.to_string(),
-                msg: format!("{}", e),
-            }),
-        }
+            })?;
+        let phones = group_members
+            .iter()
+            .map(|member| {
+                member
+                    .clone()
+                    .phone_numbers
+                    .unwrap_or(Vec::default())
+                    .iter()
+                    .map(|phone| String::from(phone.value.clone().unwrap().trim()))
+                    .collect()
+            })
+            .collect();
+        Ok(phones)
     }
 }
 
@@ -256,7 +216,7 @@ pub fn authenticator(
         oauth2::DefaultAuthenticatorDelegate,
         client,
         oauth2::DiskTokenStorage::new(&token_path).unwrap(),
-        Some(oauth2::FlowType::InstalledInteractive), // Some(oauth2::FlowType::InstalledRedirect(54324)),
+        Some(oauth2::FlowType::InstalledInteractive),
     )
 }
 

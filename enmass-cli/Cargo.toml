@@ -10,5 +10,7 @@ strsim = "0.9.3"
 structopt = "0.3"
 yup-oauth2 = "^1.0"
 hyper = "^0.10"
+snafu = "0.6.2"
+termcolor = "1.1.0"
 
 engine = { path = "../engine" }
