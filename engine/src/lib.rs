@@ -1,62 +1,15 @@
 use google_people1 as people;
 use hyper;
 use hyper_rustls;
-use snafu::Snafu;
+use snafu::{ensure, OptionExt, ResultExt};
 use strsim;
 use yup_oauth2 as oauth2;
 
+pub mod errors;
+
+pub use errors::Error;
 pub use google_people1::Person;
 pub use yup_oauth2::ApplicationSecret;
-
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("Could not get contact groups: {}", source))]
-    GetContactGroups { source: people::Error },
-
-    #[snafu(display("Could not get contact group '{}': {}", group_name, source))]
-    GetContactGroup {
-        group_name: String,
-        source: people::Error,
-    },
-
-    #[snafu(display("No resource name for contact group '{}' exists", group_name,))]
-    GetContactGroupResourceName { group_name: String },
-
-    #[snafu(display("No contact groups exist"))]
-    NoContactGroups,
-
-    #[snafu(display(
-        "Found {} contact groups with the name '{}', there can only be one",
-        found,
-        group_name
-    ))]
-    NonUniqueContactGroupName { group_name: String, found: usize },
-
-    #[snafu(display("No groups were found with the name '{}'", group_name))]
-    NoContactGroupsFoundByName { group_name: String, message: String },
-
-    #[snafu(display("No members were found in the group '{}'", group_name))]
-    NoGroupMemberResourceNames { group_name: String },
-
-    #[snafu(display(
-        "Could not get person with resource name '{}': {}",
-        resource_name,
-        source
-    ))]
-    GetPersonByResourceName {
-        resource_name: String,
-        source: people::Error,
-    },
-
-    #[snafu(display("Could not get group members for group '{}'", group_name,))]
-    GetContactGroupMembers {
-        group_name: String,
-        prev_err_msg: String,
-    },
-
-    #[snafu(display("Could not get emails for group '{}': {}", group_name, msg))]
-    GetGroupEmails { group_name: String, msg: String },
-}
 
 pub type Authenticator = oauth2::Authenticator<
     oauth2::DefaultAuthenticatorDelegate,
