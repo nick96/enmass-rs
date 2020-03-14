@@ -8,6 +8,7 @@ edition = "2018"
 dotenv = "0.15.0"
 strsim = "0.9.3"
 structopt = "0.3"
+# clap = { git = "https://github.com/clap-rs/clap/" }
 yup-oauth2 = "^1.0"
 hyper = "^0.10"
 snafu = "0.6.2"
